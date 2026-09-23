@@ -235,8 +235,8 @@
 // ── Configuration ─────────────────────────────────────────────────────────
 const SAMPLE_RATE       = 44100;   // Must match broadcaster
 const CHANNELS          = 1;       // Broadcaster sends mono Int16
-const TARGET_LATENCY_MS = 80;      // ms head-start before first sample plays
-const MAX_LATENCY_MS    = 150;     // ms — above this we snap back (strict!)
+const TARGET_LATENCY_MS = 150;     // ms head-start before first sample plays
+const MAX_LATENCY_MS    = 400;     // ms — above this we snap back (strict!)
 const RECONNECT_DELAY   = 2000;    // ms between reconnect attempts
 const HEARTBEAT_BYTE    = 0x00;    // Server sends 0x00 as keepalive; we ignore it
 
