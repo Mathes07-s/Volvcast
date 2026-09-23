@@ -1,0 +1,14 @@
+# ══════════════════════════════════════════════════════════════════════
+# Cloud Audio Relay — requirements.txt
+# For Render deployment (Python 3.11+)
+# ══════════════════════════════════════════════════════════════════════
+
+# ── ASGI Web Framework & Server ───────────────────────────────────────
+fastapi>=0.110.0            # ASGI web framework with WebSocket support
+uvicorn[standard]>=0.29.0   # Production ASGI server (includes websockets + httptools)
+
+# ── WebSocket protocol (required by uvicorn[standard]) ────────────────
+websockets>=12.0            # WebSocket protocol implementation
+
+# ── Starlette (FastAPI dependency — pinned for clarity) ───────────────
+starlette>=0.36.0           # ASGI toolkit that FastAPI is built on

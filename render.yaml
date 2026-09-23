@@ -1,0 +1,17 @@
+# ══════════════════════════════════════════════════════════════════
+#  Render Infrastructure-as-Code — Cloud Audio Relay
+#  Docs: https://render.com/docs/render-yaml
+# ══════════════════════════════════════════════════════════════════
+services:
+  - type: web
+    name: cloud-audio-relay
+    runtime: python
+    # Render sets the $PORT env var automatically; uvicorn binds to it.
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+    # Build: install dependencies
+    buildCommand: pip install -r requirements.txt
+    plan: free          # Upgrade to Starter ($7/mo) for always-on & more RAM
+    region: singapore   # Change to the region closest to your audience
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.0"

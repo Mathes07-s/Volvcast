@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#000000">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <title>Volvcast — Tap to Listen</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
+
+    <style>
+        /* ── Reset & Base ─────────────────────────────────────────────── */
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --glow:    #64ffda;
+            --glow2:   #00b4d8;
+            --red:     #ff4d6d;
+            --bg:      #000000;
+            --surface: rgba(255,255,255,0.04);
+            --border:  rgba(100,255,218,0.15);
+        }
+
+        html, body {
+            width: 100%; height: 100%;
+            background: var(--bg);
+            color: #fff;
+            font-family: 'Inter', system-ui, sans-serif;
+            overflow: hidden;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        /* ── Canvas (visualizer) ──────────────────────────────────────── */
+        #viz {
+            position: fixed;
+            inset: 0;
+            width: 100%; height: 100%;
+            z-index: 1;
+            opacity: 0;
+            transition: opacity 1.8s ease;
+        }
+
+        /* ── Tap-to-Start Overlay ─────────────────────────────────────── */
+        #overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 20;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 28px;
+            background: #000;
+            cursor: pointer;
+        }
+
+        .overlay-icon {
+            width: 80px; height: 80px;
+            border-radius: 50%;
+            background: rgba(100,255,218,0.08);
+            border: 2px solid rgba(100,255,218,0.3);
+            display: flex; align-items: center; justify-content: center;
+            animation: pulse-ring 2.5s ease-in-out infinite;
+        }
+
+        .overlay-icon svg { width: 36px; height: 36px; fill: var(--glow); }
+
+        @keyframes pulse-ring {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(100,255,218,0.25); }
+            50%       { box-shadow: 0 0 0 18px rgba(100,255,218,0); }
+        }
+
+        .overlay-title {
+            font-size: clamp(1.5rem, 5vw, 2.2rem);
+            font-weight: 800;
+            letter-spacing: -0.5px;
+            color: #fff;
+        }
+
+        .overlay-sub {
+            font-size: 0.85rem;
+            font-weight: 400;
+            color: rgba(255,255,255,0.35);
+            letter-spacing: 0.5px;
+        }
+
+        .tap-btn {
+            padding: 14px 40px;
+            font-size: 0.95rem;
+            font-weight: 700;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            color: #000;
+            background: var(--glow);
+            border: none;
+            border-radius: 50px;
+            cursor: pointer;
+            box-shadow: 0 0 30px rgba(100,255,218,0.35);
+            transition: transform 0.15s, box-shadow 0.15s;
+        }
+        .tap-btn:active { transform: scale(0.93); box-shadow: 0 0 15px rgba(100,255,218,0.2); }
+
+        /* ── HUD (status pills) ───────────────────────────────────────── */
+        #hud {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            z-index: 10;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 14px 20px;
+            pointer-events: none;
+        }
+
+        .pill {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            padding: 5px 13px;
+            border-radius: 50px;
+            background: rgba(0,0,0,0.65);
+            border: 1px solid rgba(255,255,255,0.07);
+            backdrop-filter: blur(8px);
+            font-size: 0.68rem;
+            font-weight: 600;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            color: rgba(255,255,255,0.5);
+            transition: color 0.4s, border-color 0.4s;
+        }
+        .pill.live   { color: var(--glow);  border-color: rgba(100,255,218,0.3); }
+        .pill.error  { color: var(--red);   border-color: rgba(255,77,109,0.3); }
+
+        .dot {
+            width: 7px; height: 7px;
+            border-radius: 50%;
+            background: currentColor;
+        }
+        .dot.live   { animation: blink 1.2s ease-in-out infinite; }
+        @keyframes blink { 0%,100%{opacity:1;} 50%{opacity:0.2;} }
+
+        /* ── Latency & buffer indicators ──────────────────────────────── */
+        #latency-pill { pointer-events: none; }
+
+        /* ── Waveform glyph ──────────────────────────────────────────── */
+        #waveform-glyph {
+            position: fixed;
+            bottom: 28px; left: 50%; transform: translateX(-50%);
+            z-index: 10;
+            display: flex;
+            gap: 4px;
+            align-items: flex-end;
+            height: 28px;
+            opacity: 0;
+            transition: opacity 0.5s;
+        }
+        #waveform-glyph.show { opacity: 0.6; }
+        .wg-bar {
+            width: 3px;
+            background: var(--glow);
+            border-radius: 2px;
+            animation: wg-dance 0.6s ease-in-out infinite alternate;
+        }
+        .wg-bar:nth-child(1) { height: 8px;  animation-delay: 0s; }
+        .wg-bar:nth-child(2) { height: 18px; animation-delay: 0.08s; }
+        .wg-bar:nth-child(3) { height: 26px; animation-delay: 0.16s; }
+        .wg-bar:nth-child(4) { height: 18px; animation-delay: 0.24s; }
+        .wg-bar:nth-child(5) { height: 10px; animation-delay: 0.32s; }
+        @keyframes wg-dance {
+            from { transform: scaleY(0.4); opacity: 0.5; }
+            to   { transform: scaleY(1.0); opacity: 1.0; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- ── Tap-to-Start overlay ── -->
+<div id="overlay" onclick="bootstrap()">
+    <div class="overlay-icon">
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12 1a4 4 0 0 1 4 4v7a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4zm-7
+            10a7 7 0 0 0 14 0h2a9 9 0 0 1-8 8.94V22h-2v-2.06A9 9 0 0 1
+            3 11H5z"/>
+        </svg>
+    </div>
+    <div class="overlay-title">Volvcast</div>
+    <div class="overlay-sub">Tap to start listening</div>
+    <button class="tap-btn">TAP TO LISTEN</button>
+</div>
+
+<!-- ── Heads-up display ── -->
+<div id="hud">
+    <div class="pill" id="status-pill">
+        <span class="dot" id="status-dot"></span>
+        <span id="status-text">IDLE</span>
+    </div>
+    <div class="pill" id="latency-pill">
+        <span id="latency-text">— ms</span>
+    </div>
+</div>
+
+<!-- ── Visualizer canvas ── -->
+<canvas id="viz"></canvas>
+
+<!-- ── Animated waveform bottom glyph ── -->
+<div id="waveform-glyph">
+    <div class="wg-bar"></div>
+    <div class="wg-bar"></div>
+    <div class="wg-bar"></div>
+    <div class="wg-bar"></div>
+    <div class="wg-bar"></div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════════
+//  CLOUD RELAY LISTENER  — Ultimate Zero-Latency Audio Engine
+//
+//  Jitter Buffer Strategy:
+//    • Target playback latency = 80 ms (one segment head-start)
+//    • If measured latency < 0 (starvation) OR > MAX_LATENCY_MS (drift):
+//        → Purge all scheduled sources
+//        → Snap nextPlayTime back to now + TARGET_LATENCY_MS
+//    • This guarantees lip-sync within ±80 ms at all times.
+//
+//  CRITICAL: We force the AudioBuffer sampleRate to 44100 regardless of
+//  hardware rate to prevent the browser resampler from playing frames 8%
+//  too fast (which causes starvation stutter on 48 kHz devices).
+// ═══════════════════════════════════════════════════════════════════════════
+
+'use strict';
+
+// ── Configuration ─────────────────────────────────────────────────────────
+const SAMPLE_RATE       = 44100;   // Must match broadcaster
+const CHANNELS          = 1;       // Broadcaster sends mono Int16
+const TARGET_LATENCY_MS = 80;      // ms head-start before first sample plays
+const MAX_LATENCY_MS    = 150;     // ms — above this we snap back (strict!)
+const RECONNECT_DELAY   = 2000;    // ms between reconnect attempts
+const HEARTBEAT_BYTE    = 0x00;    // Server sends 0x00 as keepalive; we ignore it
+
+// ── WebSocket URL (auto protocol detection) ───────────────────────────────
+const WS_PROTO = (location.protocol === 'https:') ? 'wss:' : 'ws:';
+const WS_URL   = `${WS_PROTO}//${location.host}/ws/listen`;
+
+// ── State ─────────────────────────────────────────────────────────────────
+let audioCtx        = null;
+let analyserNode    = null;
+let masterGain      = null;
+let ws              = null;
+let nextPlayTime    = 0;
+let wakeLock        = null;
+let scheduledSrcs   = [];   // Tracks scheduled BufferSources for emergency purge
+let reconnectTimer  = null;
+let bootstrapped    = false;
+
+// ── DOM refs ──────────────────────────────────────────────────────────────
+const overlay      = document.getElementById('overlay');
+const vizCanvas    = document.getElementById('viz');
+const statusPill   = document.getElementById('status-pill');
+const statusDot    = document.getElementById('status-dot');
+const statusText   = document.getElementById('status-text');
+const latencyText  = document.getElementById('latency-text');
+const waveGlyph    = document.getElementById('waveform-glyph');
+const ctx2d        = vizCanvas.getContext('2d');
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  BOOTSTRAP — called on first tap (required to unlock AudioContext on iOS)
+// ═══════════════════════════════════════════════════════════════════════════
+function bootstrap() {
+    if (bootstrapped) return;
+    bootstrapped = true;
+
+    overlay.style.display = 'none';
+    vizCanvas.style.opacity = '1';
+    waveGlyph.classList.add('show');
+
+    // AudioContext
+    const AC = window.AudioContext || window.webkitAudioContext;
+    try {
+        audioCtx = new AC({ sampleRate: SAMPLE_RATE, latencyHint: 'interactive' });
+    } catch (_) {
+        audioCtx = new AC({ latencyHint: 'interactive' });
+    }
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+
+    // Audio graph: BufferSources → masterGain → analyser → speakers
+    masterGain = audioCtx.createGain();
+    masterGain.gain.value = 1.0;
+
+    analyserNode = audioCtx.createAnalyser();
+    analyserNode.fftSize = 512;
+    analyserNode.smoothingTimeConstant = 0.8;
+
+    masterGain.connect(analyserNode);
+    analyserNode.connect(audioCtx.destination);
+
+    // Wake lock
+    acquireWakeLock();
+
+    // Resize canvas and start rendering
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+    renderLoop();
+
+    // Connect to relay
+    connectWS();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  WAKE LOCK
+// ═══════════════════════════════════════════════════════════════════════════
+async function acquireWakeLock() {
+    if (!('wakeLock' in navigator)) return;
+    try {
+        wakeLock = await navigator.wakeLock.request('screen');
+        wakeLock.addEventListener('release', () => { wakeLock = null; });
+    } catch (e) {
+        console.warn('WakeLock denied:', e.message);
+    }
+}
+
+// Re-acquire if page becomes visible again (tab switch, phone unlock, etc.)
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && !wakeLock && bootstrapped) {
+        acquireWakeLock();
+    }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  WEBSOCKET — connection & reconnection
+// ═══════════════════════════════════════════════════════════════════════════
+function connectWS() {
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+
+    setStatus('CONNECTING', false);
+
+    ws = new WebSocket(WS_URL);
+    ws.binaryType = 'arraybuffer';
+
+    ws.onopen = () => {
+        setStatus('LIVE', true);
+        if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+        // Reset jitter buffer on fresh connection
+        nextPlayTime = 0;
+        purgeScheduled();
+    };
+
+    ws.onclose = (evt) => {
+        setStatus('DISCONNECTED', false, true);
+        ws = null;
+        // Auto-reconnect
+        if (!reconnectTimer) {
+            reconnectTimer = setTimeout(connectWS, RECONNECT_DELAY);
+        }
+    };
+
+    ws.onerror = () => {
+        setStatus('ERROR', false, true);
+    };
+
+    ws.onmessage = handleMessage;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  AUDIO PROCESSING — the heart of the engine
+// ═══════════════════════════════════════════════════════════════════════════
+function handleMessage(event) {
+    if (!audioCtx || !masterGain) return;
+
+    const data = event.data;
+    if (!(data instanceof ArrayBuffer)) return;
+
+    // Filter out 1-byte keepalive frames sent by the server ping loop
+    if (data.byteLength <= 1) return;
+
+    // ── Decode Int16 PCM → Float32 ──────────────────────────────────────
+    const int16  = new Int16Array(data);
+    const float32 = new Float32Array(int16.length);
+    for (let i = 0; i < int16.length; i++) {
+        float32[i] = int16[i] / 32768.0;
+    }
+
+    // ── Create AudioBuffer at the canonical sample rate ──────────────────
+    // Forcing 44100 here prevents the browser's internal resampler from
+    // running at 48 kHz hardware rate and playing frames 8.84% too fast.
+    const numSamples = float32.length / CHANNELS;
+    const buffer = audioCtx.createBuffer(CHANNELS, numSamples, SAMPLE_RATE);
+
+    if (CHANNELS === 2) {
+        // Deinterleave stereo: L, R, L, R, ...
+        const left  = buffer.getChannelData(0);
+        const right = buffer.getChannelData(1);
+        for (let i = 0, j = 0; i < numSamples; i++, j += 2) {
+            left[i]  = float32[j];
+            right[i] = float32[j + 1];
+        }
+    } else {
+        // Mono
+        buffer.getChannelData(0).set(float32);
+    }
+
+    // ── Jitter Buffer — Ultimate Strict Mode ─────────────────────────────
+    const now     = audioCtx.currentTime;
+    const latency = nextPlayTime - now;   // seconds
+    const latencyMs = latency * 1000;
+
+    // Update HUD
+    latencyText.textContent = `${Math.max(0, Math.round(latencyMs))} ms`;
+
+    if (latencyMs < 0 || latencyMs > MAX_LATENCY_MS) {
+        // SNAP: starvation (latency < 0) OR drift beyond threshold
+        // Purge all scheduled future sources to prevent ghost audio
+        purgeScheduled();
+        // Re-anchor exactly TARGET_LATENCY_MS ahead of now
+        nextPlayTime = now + (TARGET_LATENCY_MS / 1000);
+    }
+
+    // ── Schedule playback ────────────────────────────────────────────────
+    const src = audioCtx.createBufferSource();
+    src.buffer = buffer;
+    src.playbackRate.value = 1.0;   // STRICT: never speed-up or slow-down
+    src.connect(masterGain);
+    src.start(nextPlayTime);
+
+    // Track for potential purge
+    scheduledSrcs.push(src);
+    src.onended = () => {
+        const idx = scheduledSrcs.indexOf(src);
+        if (idx > -1) scheduledSrcs.splice(idx, 1);
+    };
+
+    // Advance playhead
+    nextPlayTime += buffer.duration;
+}
+
+function purgeScheduled() {
+    scheduledSrcs.forEach(s => { try { s.stop(); } catch (_) {} });
+    scheduledSrcs = [];
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  VISUALIZER — neon EQ bars with glowing tail
+// ═══════════════════════════════════════════════════════════════════════════
+function resizeCanvas() {
+    vizCanvas.width  = window.innerWidth;
+    vizCanvas.height = window.innerHeight;
+}
+
+function renderLoop() {
+    requestAnimationFrame(renderLoop);
+    if (!analyserNode) return;
+
+    const W = vizCanvas.width;
+    const H = vizCanvas.height;
+    const bins = analyserNode.frequencyBinCount;
+    const freqData = new Uint8Array(bins);
+    analyserNode.getByteFrequencyData(freqData);
+
+    // Pitch-black trailing fade
+    ctx2d.fillStyle = 'rgba(0,0,0,0.18)';
+    ctx2d.fillRect(0, 0, W, H);
+
+    // Bar geometry
+    const barW   = Math.max(2, (W / bins) * 2.4);
+    const maxBarH = H * 0.72;
+    let x = 0;
+
+    for (let i = 0; i < bins; i++) {
+        const t = freqData[i] / 255;   // 0..1
+        if (t < 0.02) { x += barW + 3; continue; }  // skip silence
+
+        const barH  = t * maxBarH;
+        const alpha = 0.55 + t * 0.45;
+
+        // Gradient: cyan at top → teal at bottom
+        const grad = ctx2d.createLinearGradient(0, H - barH, 0, H);
+        grad.addColorStop(0, `rgba(100,255,218,${alpha})`);
+        grad.addColorStop(1, `rgba(0,180,216,${alpha * 0.5})`);
+
+        ctx2d.fillStyle = grad;
+        ctx2d.shadowBlur  = 14 * t;
+        ctx2d.shadowColor = '#64ffda';
+        ctx2d.fillRect(x, H - barH, barW, barH);
+
+        x += barW + 3;
+    }
+
+    ctx2d.shadowBlur = 0;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  STATUS HUD HELPER
+// ═══════════════════════════════════════════════════════════════════════════
+function setStatus(text, isLive, isError = false) {
+    statusText.textContent = text;
+    statusPill.className = 'pill' + (isLive ? ' live' : isError ? ' error' : '');
+    statusDot.className  = 'dot'  + (isLive ? ' live' : '');
+}
+</script>
+</body>
+</html>
