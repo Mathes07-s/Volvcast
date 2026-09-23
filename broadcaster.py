@@ -59,7 +59,7 @@ from websockets.exceptions import (
 # ★  CONFIGURE THIS  ★
 # Replace with your actual Render URL.  Must use wss:// (not ws://) for Render.
 # ─────────────────────────────────────────────────────────────────────────────
-RELAY_URL: str = "wss://YOUR-APP-NAME.onrender.com/ws/broadcast_uplink"
+RELAY_URL: str = "wss://volvcast.onrender.com/ws/broadcast_uplink"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # AUDIO CONFIGURATION — must match server-side expectations
@@ -75,11 +75,12 @@ GAIN:         float = 1.0       # Amplification multiplier (1.0 = unity)
 # ─────────────────────────────────────────────────────────────────────────────
 RECONNECT_DELAY_INIT:  float = 1.0   # seconds for first reconnect attempt
 RECONNECT_DELAY_MAX:   float = 16.0  # exponential back-off ceiling
-SEND_QUEUE_MAXSIZE:    int   = 64    # max queued chunks before dropping oldest
+SEND_QUEUE_MAXSIZE:    int   = 8     # max queued chunks (8 * 23ms = ~184ms max client-side delay)
 
-# WebSocket options
-WS_PING_INTERVAL: int = 20   # seconds — must beat Render's 50-second timeout
-WS_PING_TIMEOUT:  int = 10   # seconds — disconnect if pong not received
+# WebSocket options - Disabled because continuous streaming acts as keep-alive.
+# Enabling ping/pong on high-frequency streams causes false timeouts.
+WS_PING_INTERVAL = None
+WS_PING_TIMEOUT  = None
 
 # ─────────────────────────────────────────────────────────────────────────────
 # LOGGING
@@ -103,6 +104,13 @@ def _is_wasapi(device: dict) -> bool:
     except Exception:
         return False
 
+def _is_mme_or_ds(device: dict) -> bool:
+    try:
+        api_name = sd.query_hostapis(device["hostapi"]).get("name", "").upper()
+        return "MME" in api_name or "DIRECTSOUND" in api_name
+    except Exception:
+        return False
+
 
 def find_vb_cable_device() -> Optional[int]:
     """
@@ -117,7 +125,7 @@ def find_vb_cable_device() -> Optional[int]:
             if dev.get("max_input_channels", 0) < 1:
                 continue
             name_lower = dev["name"].lower()
-            if any(k in name_lower for k in keywords) and _is_wasapi(dev):
+            if any(k in name_lower for k in keywords) and _is_mme_or_ds(dev):
                 logger.info(f"VB-Cable auto-detected: [{idx}] {dev['name']}")
                 return idx
     except Exception as exc:
@@ -145,9 +153,9 @@ def find_wasapi_loopback_device() -> Optional[int]:
 
 def list_all_input_devices():
     """Print all input-capable devices to help the user pick one."""
-    print("\n╔══════════════════════════════════════════════════════════╗")
-    print("║              Available Input Devices                     ║")
-    print("╠══════════════════════════════════════════════════════════╣")
+    print("\n+----------------------------------------------------------+")
+    print("|              Available Input Devices                     |")
+    print("+----------------------------------------------------------+")
     try:
         for idx, dev in enumerate(sd.query_devices()):
             if dev.get("max_input_channels", 0) < 1:
@@ -156,10 +164,10 @@ def list_all_input_devices():
                 api = sd.query_hostapis(dev["hostapi"])["name"]
             except Exception:
                 api = "?"
-            print(f"║  [{idx:>3}] {dev['name']:<35} ({api})")
+            print(f"|  [{idx:>3}] {dev['name']:<35} ({api})")
     except Exception as exc:
-        print(f"║  Error: {exc}")
-    print("╚══════════════════════════════════════════════════════════╝\n")
+        print(f"|  Error: {exc}")
+    print("+----------------------------------------------------------+\n")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -238,23 +246,20 @@ class AudioCapture:
 
     def start(self) -> None:
         dev_name = "auto-detect" if self._device_index is None else str(self._device_index)
-        logger.info(f"Opening WASAPI loopback on device [{dev_name}] ...")
+        logger.info(f"Opening audio capture on device [{dev_name}] ...")
         logger.info(f"  Sample rate : {SAMPLE_RATE} Hz")
         logger.info(f"  Channels    : {CHANNELS}")
         logger.info(f"  Block size  : {BLOCKSIZE} frames (~{BLOCKSIZE/SAMPLE_RATE*1000:.1f} ms)")
         logger.info(f"  Gain        : {self._gain:.2f}x")
 
-        extra_settings = sd.WasapiSettings(exclusive=False)
-
         self._stream = sd.InputStream(
             device=self._device_index,
             samplerate=SAMPLE_RATE,
-            channels=max(2, CHANNELS),  # WASAPI usually needs at least 2ch; we downmix after
+            channels=max(2, CHANNELS),  # Usually needs at least 2ch; we downmix after
             dtype=DTYPE_CAPTURE,
             blocksize=BLOCKSIZE,
             latency="low",
             callback=self._callback,
-            extra_settings=extra_settings,
         )
         self._stream.start()
         logger.info("Audio capture STARTED ✓")
@@ -301,7 +306,17 @@ async def run_uplink(send_queue: asyncio.Queue, relay_url: str) -> None:
 
                 while True:
                     chunk: bytes = await send_queue.get()
-                    await ws.send(chunk)
+                    
+                    # Dynamic batching: if the queue has backed up, pull multiple chunks 
+                    # into a single WebSocket frame to reduce TCP overhead and recover fast.
+                    batch = bytearray(chunk)
+                    while not send_queue.empty() and len(batch) < 16384:
+                        try:
+                            batch.extend(send_queue.get_nowait())
+                        except asyncio.QueueEmpty:
+                            break
+                            
+                    await ws.send(bytes(batch))
 
         except (ConnectionClosedOK, ConnectionClosedError) as exc:
             logger.warning(f"WebSocket closed: {exc}. Reconnecting in {delay:.1f}s …")
@@ -391,13 +406,13 @@ async def async_main(args: argparse.Namespace) -> None:
             signal.signal(sig, _signal_handler)
 
     print()
-    print("╔══════════════════════════════════════════════════════════╗")
-    print("║         Local Broadcaster — RUNNING                     ║")
-    print("║                                                          ║")
-    print(f"║  Target  : {relay_url[:50]:<50} ║")
-    print("║                                                          ║")
-    print("║  Press Ctrl+C to stop.                                   ║")
-    print("╚══════════════════════════════════════════════════════════╝")
+    print("+----------------------------------------------------------+")
+    print("|         Local Broadcaster - RUNNING                      |")
+    print("|                                                          |")
+    print(f"|  Target  : {relay_url[:50]:<50} |")
+    print("|                                                          |")
+    print("|  Press Ctrl+C to stop.                                   |")
+    print("+----------------------------------------------------------+")
     print()
 
     try:

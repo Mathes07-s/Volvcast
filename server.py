@@ -481,9 +481,25 @@ async def listener_ws(ws: WebSocket):
             if len(chunk) == 0:
                 # Empty heartbeat from ping loop, skip
                 continue
+                
+            # Dynamic batching: if the listener is slightly lagging, bundle
+            # up to 16KB of audio into a single WebSocket frame to reduce TCP overhead.
+            batch = bytearray(chunk)
+            while not queue.empty() and len(batch) < 16384:
+                try:
+                    next_chunk = queue.get_nowait()
+                    if next_chunk is None:
+                        # Put poison pill back and break to handle it on the next loop
+                        queue.put_nowait(None)
+                        break
+                    if len(next_chunk) > 0:
+                        batch.extend(next_chunk)
+                except asyncio.QueueEmpty:
+                    break
+
             try:
                 if ws.client_state == WebSocketState.CONNECTED:
-                    await ws.send_bytes(chunk)
+                    await ws.send_bytes(bytes(batch))
             except Exception:
                 break
 
