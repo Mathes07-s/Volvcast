@@ -77,9 +77,10 @@ RECONNECT_DELAY_INIT:  float = 1.0   # seconds for first reconnect attempt
 RECONNECT_DELAY_MAX:   float = 16.0  # exponential back-off ceiling
 SEND_QUEUE_MAXSIZE:    int   = 8     # max queued chunks (8 * 23ms = ~184ms max client-side delay)
 
-# WebSocket options - Disabled because continuous streaming acts as keep-alive.
-# Enabling ping/pong on high-frequency streams causes false timeouts.
-WS_PING_INTERVAL = None
+# WebSocket options - We need ping_interval to force downstream traffic so Render's
+# load balancer doesn't drop the connection (code 1005). But we keep ping_timeout=None
+# so the client doesn't mistakenly disconnect itself if a pong is delayed by audio.
+WS_PING_INTERVAL = 20
 WS_PING_TIMEOUT  = None
 
 # ─────────────────────────────────────────────────────────────────────────────

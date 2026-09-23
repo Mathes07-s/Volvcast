@@ -420,6 +420,25 @@ async def broadcaster_uplink(ws: WebSocket):
     relay.broadcaster_connected = True
     relay.broadcaster_id = client_host
 
+    # ── Ping keepalive coroutine ──────────────────────────────────────────
+    # Render's proxy may drop connections (code 1005) if traffic is strictly
+    # unidirectional for too long. We send a 1-byte heartbeat downstream
+    # every 15s to guarantee bidirectional activity.
+    async def _ping_loop():
+        try:
+            while True:
+                await asyncio.sleep(15)
+                if ws.client_state != WebSocketState.CONNECTED:
+                    break
+                try:
+                    await ws.send_bytes(b"\x00")
+                except Exception:
+                    break
+        except asyncio.CancelledError:
+            pass
+
+    ping_task = asyncio.create_task(_ping_loop(), name="uplink-ping")
+
     try:
         while True:
             # receive_bytes() will raise WebSocketDisconnect on close,
@@ -438,6 +457,7 @@ async def broadcaster_uplink(ws: WebSocket):
     except Exception as exc:
         logger.error(f"Broadcaster uplink error: {exc!r}")
     finally:
+        ping_task.cancel()
         relay.broadcaster_connected = False
         relay.broadcaster_id = None
         # Try to close cleanly if socket is still open
