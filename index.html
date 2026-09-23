@@ -235,8 +235,12 @@
 // ── Configuration ─────────────────────────────────────────────────────────
 const SAMPLE_RATE       = 44100;   // Must match broadcaster
 const CHANNELS          = 1;       // Broadcaster sends mono Int16
-const TARGET_LATENCY_MS = 150;     // ms head-start before first sample plays
-const MAX_LATENCY_MS    = 400;     // ms — above this we snap back (strict!)
+// TARGET_LATENCY_MS: head-start before first sample plays, AND the floor
+// applied every time the jitter buffer snaps (starvation or large drift).
+// 200ms = 4 relay burst windows (~46ms each) of pre-roll cushion.
+// This is the crackling killer: packets queue up here before playback begins.
+const TARGET_LATENCY_MS = 200;     // ms — 100ms minimum; 200ms for burst-safe pre-roll
+const MAX_LATENCY_MS    = 400;     // ms — above this we snap back to TARGET_LATENCY_MS
 const RECONNECT_DELAY   = 2000;    // ms between reconnect attempts
 const HEARTBEAT_BYTE    = 0x00;    // Server sends 0x00 as keepalive; we ignore it
 
